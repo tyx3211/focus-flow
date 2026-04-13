@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Frontend and Electron build output
+dist/
+dist-electron/
+release/
+out/
+
+# Rust build output
+backend/target/
+
+# Local runtime data and secrets
+backend/accounts.json
+backend/settings.json
+accounts.json
+settings.json
+.env
+.env.*
+!.env.example
+
+# Local tools, installers, and accidentally copied repositories
+rustup-init.exe
+codex-src/
+
+# Logs and diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
