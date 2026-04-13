@@ -53,18 +53,13 @@ npm run dev
 
 ## 打包构建
 
-先构建后端二进制：
-
-```powershell
-cd backend
-cargo build --release
-```
-
-再回到项目根目录构建桌面应用：
+在项目根目录构建桌面应用：
 
 ```powershell
 npm run build
 ```
+
+`build` 脚本会先用 release 模式编译 Rust 后端，然后再执行 Vue/Vite 构建和 Electron Builder 打包。
 
 打包后的 Electron 应用会从 `backend/target/release/focus-flow-backend.exe` 复制后端程序，这个路径由 `package.json` 中的 `extraResources` 配置指定。
 
@@ -81,6 +76,7 @@ npm run build
 
 ```powershell
 npm run dev      # 启动 Vite/Electron 开发模式
-npm run build    # 类型检查、构建渲染层和 Electron 输出，并使用 electron-builder 打包
+npm run build:backend # 构建 Rust 后端 release 二进制
+npm run build    # 构建后端、类型检查、构建渲染层和 Electron 输出，并使用 electron-builder 打包
 npm run preview  # 预览 Vite 构建结果
 ```

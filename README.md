@@ -53,18 +53,13 @@ In development, the Electron main process does not start the backend automatical
 
 ## Build
 
-Build the backend binary first:
-
-```powershell
-cd backend
-cargo build --release
-```
-
-Then build the desktop app from the project root:
+Build the desktop app from the project root:
 
 ```powershell
 npm run build
 ```
+
+The `build` script compiles the Rust backend in release mode before running the Vue/Vite and Electron Builder steps.
 
 The packaged app expects `backend/target/release/focus-flow-backend.exe`, which is copied into Electron resources by the `extraResources` setting in `package.json`.
 
@@ -81,6 +76,7 @@ These files can contain credentials or personal settings and are intentionally i
 
 ```powershell
 npm run dev      # Start Vite/Electron development mode
-npm run build    # Type-check, build renderer/Electron output, and package with electron-builder
+npm run build:backend # Build the Rust backend release binary
+npm run build    # Build backend, type-check, build renderer/Electron output, and package with electron-builder
 npm run preview  # Preview the Vite build
 ```
