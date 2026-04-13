@@ -20,14 +20,28 @@ struct Account {
     status: String,
     primary_used: f64,
     secondary_used: f64,
+    primary_window_minutes: Option<i64>,
+    secondary_window_minutes: Option<i64>,
     primary_reset_at: Option<i64>,   // unix timestamp for 5h reset
     secondary_reset_at: Option<i64>, // unix timestamp for weekly reset
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
 struct Settings {
     polling_enabled: bool,
     polling_interval_secs: u64,
+    default_quota_view: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            polling_enabled: true,
+            polling_interval_secs: 15,
+            default_quota_view: "remaining".to_string(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -55,6 +69,7 @@ struct OpenAIBillingUsage {
 #[derive(Deserialize, Debug)]
 struct WhamRateLimitWindow {
     used_percent: f64,
+    limit_window_seconds: Option<i64>,
     reset_at: Option<i64>,
 }
 
@@ -82,6 +97,8 @@ async fn fetch_all_accounts(bg_accounts: Arc<Mutex<Vec<Account>>>) {
         let mut new_status = String::new();
         let mut p_used = 0.0;
         let mut s_used = 0.0;
+        let mut p_window_minutes: Option<i64> = None;
+        let mut s_window_minutes: Option<i64> = None;
         let mut p_reset_at: Option<i64> = None;
         let mut s_reset_at: Option<i64> = None;
 
@@ -141,6 +158,16 @@ async fn fetch_all_accounts(bg_accounts: Arc<Mutex<Vec<Account>>>) {
                     if let Some(limit) = json.rate_limit {
                         p_used = limit.primary_window.as_ref().map(|w| w.used_percent).unwrap_or(0.0);
                         s_used = limit.secondary_window.as_ref().map(|w| w.used_percent).unwrap_or(0.0);
+                        p_window_minutes = limit
+                            .primary_window
+                            .as_ref()
+                            .and_then(|w| w.limit_window_seconds)
+                            .map(|seconds| (seconds + 59) / 60);
+                        s_window_minutes = limit
+                            .secondary_window
+                            .as_ref()
+                            .and_then(|w| w.limit_window_seconds)
+                            .map(|seconds| (seconds + 59) / 60);
                         p_reset_at = limit.primary_window.as_ref().and_then(|w| w.reset_at);
                         s_reset_at = limit.secondary_window.as_ref().and_then(|w| w.reset_at);
                     }
@@ -179,6 +206,8 @@ async fn fetch_all_accounts(bg_accounts: Arc<Mutex<Vec<Account>>>) {
                 a.status = new_status;
                 a.primary_used = p_used;
                 a.secondary_used = s_used;
+                a.primary_window_minutes = p_window_minutes;
+                a.secondary_window_minutes = s_window_minutes;
                 a.primary_reset_at = p_reset_at;
                 a.secondary_reset_at = s_reset_at;
             }
@@ -201,10 +230,7 @@ async fn main() {
     };
     let state_accounts = Arc::new(Mutex::new(accounts_data));
 
-    let default_settings = Settings {
-        polling_enabled: true,
-        polling_interval_secs: 15,
-    };
+    let default_settings = Settings::default();
     let settings_data = match fs::read_to_string("settings.json") {
         Ok(data) => serde_json::from_str(&data).unwrap_or(default_settings.clone()),
         Err(_) => default_settings,
@@ -289,6 +315,8 @@ async fn main() {
                     status: "Pending...".to_string(),
                     primary_used: 0.0,
                     secondary_used: 0.0,
+                    primary_window_minutes: None,
+                    secondary_window_minutes: None,
                     primary_reset_at: None,
                     secondary_reset_at: None,
                 },

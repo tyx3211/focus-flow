@@ -2,7 +2,21 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 
 const message = ref('Connecing to Rust...')
-const stats = ref<{ tasks: number, accounts: any[] }>({ tasks: 0, accounts: [] })
+type Account = {
+  id: string
+  name: string
+  key: string
+  usage_str: string
+  status: string
+  primary_used: number
+  secondary_used: number
+  primary_window_minutes?: number | null
+  secondary_window_minutes?: number | null
+  primary_reset_at?: number | null
+  secondary_reset_at?: number | null
+}
+
+const stats = ref<{ tasks: number, accounts: Account[] }>({ tasks: 0, accounts: [] })
 let statusInterval: number | null = null
 
 const showAddModal = ref(false)
@@ -13,18 +27,34 @@ const editingId = ref<string | null>(null)
 const editName = ref('')
 
 const newAccount = ref({ name: '', key: '' })
-const settings = ref({ polling_enabled: true, polling_interval_secs: 15 })
+const settings = ref({ polling_enabled: true, polling_interval_secs: 15, default_quota_view: 'remaining' })
 
 const displayModes = ref<Record<string, boolean>>({})
 
 const toggleMode = (id: string) => {
-  displayModes.value[id] = !displayModes.value[id]
+  displayModes.value[id] = !isRemainingMode(id)
 }
+
+const isRemainingMode = (id: string) => displayModes.value[id] ?? (settings.value.default_quota_view !== 'limit')
 
 const displayKey = (key: string) => {
   if (!key) return '***'
   return key.length > 20 ? `${key.slice(0, 10)}...${key.slice(-6)}` : '***'
 }
+
+const formatWindowLabel = (windowMinutes: number | null | undefined, fallback: string): string => {
+  if (!windowMinutes || windowMinutes <= 0) return fallback
+  if (windowMinutes % (60 * 24 * 7) === 0) return 'Weekly'
+  if (windowMinutes % (60 * 24) === 0) {
+    const days = windowMinutes / (60 * 24)
+    return `${days}d`
+  }
+  if (windowMinutes % 60 === 0) return `${windowMinutes / 60}h`
+  return `${windowMinutes}m`
+}
+
+const primaryLimitLabel = (acc: Account) => formatWindowLabel(acc.primary_window_minutes, '5h')
+const secondaryLimitLabel = (acc: Account) => formatWindowLabel(acc.secondary_window_minutes, 'Weekly')
 
 const formatResetTime = (unixTs: number | null | undefined): string => {
   if (!unixTs) return '—'
@@ -123,7 +153,8 @@ const saveSettings = async () => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       polling_enabled: settings.value.polling_enabled,
-      polling_interval_secs: Number(settings.value.polling_interval_secs)
+      polling_interval_secs: Number(settings.value.polling_interval_secs),
+      default_quota_view: settings.value.default_quota_view
     })
   })
   showSettingsModal.value = false
@@ -277,29 +308,29 @@ const openDataFolder = () => {
                 <div class="mt-4 space-y-3 pt-2" v-if="acc.status === 'Active'">
                   <div>
                     <div class="flex justify-between items-center text-[11px] mb-1.5">
-                      <span class="text-gray-400 tracking-wide">5h {{ displayModes[acc.id] ? 'remaining' : 'limit' }}</span>
-                      <span class="font-mono" :class="displayModes[acc.id] ? 'text-emerald-400' : 'text-gray-300'">
-                        {{ displayModes[acc.id] ? (100 - acc.primary_used).toFixed(1) : acc.primary_used.toFixed(1) }}%
+                      <span class="text-gray-400 tracking-wide">{{ primaryLimitLabel(acc) }} {{ isRemainingMode(acc.id) ? 'remaining' : 'limit' }}</span>
+                      <span class="font-mono" :class="isRemainingMode(acc.id) ? 'text-emerald-400' : 'text-gray-300'">
+                        {{ isRemainingMode(acc.id) ? (100 - acc.primary_used).toFixed(1) : acc.primary_used.toFixed(1) }}%
                       </span>
                     </div>
                     <div class="w-full h-1.5 bg-[#303030] rounded-full overflow-hidden">
                       <div class="h-full rounded-full transition-all duration-500" 
-                          :class="displayModes[acc.id] ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-emerald-600 shadow-[0_0_8px_rgba(5,150,105,0.5)]'"
-                          :style="{ width: Math.min(100, Math.max(0, displayModes[acc.id] ? 100 - acc.primary_used : acc.primary_used)) + '%' }"></div>
+                          :class="isRemainingMode(acc.id) ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-emerald-600 shadow-[0_0_8px_rgba(5,150,105,0.5)]'"
+                          :style="{ width: Math.min(100, Math.max(0, isRemainingMode(acc.id) ? 100 - acc.primary_used : acc.primary_used)) + '%' }"></div>
                     </div>
                     <div class="text-[10px] text-gray-500 mt-1 text-right font-mono">{{ formatResetTime(acc.primary_reset_at) }}</div>
                   </div>
                   <div class="pt-1">
                     <div class="flex justify-between items-center text-[11px] mb-1.5">
-                      <span class="text-gray-400 tracking-wide">Weekly {{ displayModes[acc.id] ? 'remaining' : 'limit' }}</span>
-                      <span class="font-mono" :class="displayModes[acc.id] ? 'text-blue-400' : 'text-gray-300'">
-                        {{ displayModes[acc.id] ? (100 - acc.secondary_used).toFixed(1) : acc.secondary_used.toFixed(1) }}%
+                      <span class="text-gray-400 tracking-wide">{{ secondaryLimitLabel(acc) }} {{ isRemainingMode(acc.id) ? 'remaining' : 'limit' }}</span>
+                      <span class="font-mono" :class="isRemainingMode(acc.id) ? 'text-blue-400' : 'text-gray-300'">
+                        {{ isRemainingMode(acc.id) ? (100 - acc.secondary_used).toFixed(1) : acc.secondary_used.toFixed(1) }}%
                       </span>
                     </div>
                     <div class="w-full h-1.5 bg-[#303030] rounded-full overflow-hidden">
                       <div class="h-full rounded-full transition-all duration-500"
-                          :class="displayModes[acc.id] ? 'bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]' : 'bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.5)]'"
-                          :style="{ width: Math.min(100, Math.max(0, displayModes[acc.id] ? 100 - acc.secondary_used : acc.secondary_used)) + '%' }"></div>
+                          :class="isRemainingMode(acc.id) ? 'bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]' : 'bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.5)]'"
+                          :style="{ width: Math.min(100, Math.max(0, isRemainingMode(acc.id) ? 100 - acc.secondary_used : acc.secondary_used)) + '%' }"></div>
                     </div>
                     <div class="text-[10px] text-gray-500 mt-1 text-right font-mono">{{ formatResetTime(acc.secondary_reset_at) }}</div>
                   </div>
@@ -367,6 +398,15 @@ const openDataFolder = () => {
           <label class="block text-xs font-semibold text-gray-400 mb-1.5 uppercase tracking-wide">Interval (Seconds)</label>
           <input v-model="settings.polling_interval_secs" type="number" min="5" max="3600" class="w-full bg-[#1c1c1c] border border-[#444] rounded text-sm p-2.5 text-white outline-none focus:border-blue-500 transition-colors" />
           <p class="text-xs text-gray-500 mt-2">How frequently the invisible Rust backend contacts OpenAI WHAM APIs.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 mb-1.5 uppercase tracking-wide">Default Quota View</label>
+          <select v-model="settings.default_quota_view" class="w-full bg-[#1c1c1c] border border-[#444] rounded text-sm p-2.5 text-white outline-none focus:border-blue-500 transition-colors">
+            <option value="remaining">Remaining</option>
+            <option value="limit">Used</option>
+          </select>
+          <p class="text-xs text-gray-500 mt-2">Sets the default progress display for each account card.</p>
         </div>
 
         <div class="pt-2">
