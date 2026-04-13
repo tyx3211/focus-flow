@@ -1,5 +1,7 @@
 # Focus Flow
 
+[简体中文](README_CN.md)
+
 Focus Flow is a small Windows desktop monitor for API account quota usage. It combines a Vue 3 + Vite renderer, an Electron shell, and a native Rust backend service.
 
 ## What it does

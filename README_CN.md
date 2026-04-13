@@ -1,5 +1,7 @@
 # Focus Flow
 
+[English](README.md)
+
 Focus Flow 是一个用于监控 API 账号额度使用情况的 Windows 桌面小工具。项目由 Vue 3 + Vite 渲染层、Electron 桌面外壳和 Rust 本地后端服务组成。
 
 ## 功能概览
