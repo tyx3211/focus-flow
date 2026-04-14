@@ -20,6 +20,10 @@ struct Account {
     status: String,
     primary_used: f64,
     secondary_used: f64,
+    #[serde(default)]
+    primary_window_present: bool,
+    #[serde(default)]
+    secondary_window_present: bool,
     primary_window_minutes: Option<i64>,
     secondary_window_minutes: Option<i64>,
     primary_reset_at: Option<i64>,   // unix timestamp for 5h reset
@@ -97,6 +101,8 @@ async fn fetch_all_accounts(bg_accounts: Arc<Mutex<Vec<Account>>>) {
         let mut new_status = String::new();
         let mut p_used = 0.0;
         let mut s_used = 0.0;
+        let mut p_present = false;
+        let mut s_present = false;
         let mut p_window_minutes: Option<i64> = None;
         let mut s_window_minutes: Option<i64> = None;
         let mut p_reset_at: Option<i64> = None;
@@ -156,6 +162,8 @@ async fn fetch_all_accounts(bg_accounts: Arc<Mutex<Vec<Account>>>) {
                         .to_uppercase();
 
                     if let Some(limit) = json.rate_limit {
+                        p_present = limit.primary_window.is_some();
+                        s_present = limit.secondary_window.is_some();
                         p_used = limit.primary_window.as_ref().map(|w| w.used_percent).unwrap_or(0.0);
                         s_used = limit.secondary_window.as_ref().map(|w| w.used_percent).unwrap_or(0.0);
                         p_window_minutes = limit
@@ -206,6 +214,8 @@ async fn fetch_all_accounts(bg_accounts: Arc<Mutex<Vec<Account>>>) {
                 a.status = new_status;
                 a.primary_used = p_used;
                 a.secondary_used = s_used;
+                a.primary_window_present = p_present;
+                a.secondary_window_present = s_present;
                 a.primary_window_minutes = p_window_minutes;
                 a.secondary_window_minutes = s_window_minutes;
                 a.primary_reset_at = p_reset_at;
@@ -315,6 +325,8 @@ async fn main() {
                     status: "Pending...".to_string(),
                     primary_used: 0.0,
                     secondary_used: 0.0,
+                    primary_window_present: false,
+                    secondary_window_present: false,
                     primary_window_minutes: None,
                     secondary_window_minutes: None,
                     primary_reset_at: None,

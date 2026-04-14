@@ -10,6 +10,8 @@ type Account = {
   status: string
   primary_used: number
   secondary_used: number
+  primary_window_present?: boolean
+  secondary_window_present?: boolean
   primary_window_minutes?: number | null
   secondary_window_minutes?: number | null
   primary_reset_at?: number | null
@@ -55,6 +57,8 @@ const formatWindowLabel = (windowMinutes: number | null | undefined, fallback: s
 
 const primaryLimitLabel = (acc: Account) => formatWindowLabel(acc.primary_window_minutes, '5h')
 const secondaryLimitLabel = (acc: Account) => formatWindowLabel(acc.secondary_window_minutes, 'Weekly')
+const hasPrimaryWindow = (acc: Account) => acc.primary_window_present ?? false
+const hasSecondaryWindow = (acc: Account) => acc.secondary_window_present ?? false
 
 const formatResetTime = (unixTs: number | null | undefined): string => {
   if (!unixTs) return '—'
@@ -306,7 +310,7 @@ const openDataFolder = () => {
                 </div>
 
                 <div class="mt-4 space-y-3 pt-2" v-if="acc.status === 'Active'">
-                  <div>
+                  <div v-if="hasPrimaryWindow(acc)">
                     <div class="flex justify-between items-center text-[11px] mb-1.5">
                       <span class="text-gray-400 tracking-wide">{{ primaryLimitLabel(acc) }} {{ isRemainingMode(acc.id) ? 'remaining' : 'limit' }}</span>
                       <span class="font-mono" :class="isRemainingMode(acc.id) ? 'text-emerald-400' : 'text-gray-300'">
@@ -320,7 +324,7 @@ const openDataFolder = () => {
                     </div>
                     <div class="text-[10px] text-gray-500 mt-1 text-right font-mono">{{ formatResetTime(acc.primary_reset_at) }}</div>
                   </div>
-                  <div class="pt-1">
+                  <div v-if="hasSecondaryWindow(acc)" class="pt-1">
                     <div class="flex justify-between items-center text-[11px] mb-1.5">
                       <span class="text-gray-400 tracking-wide">{{ secondaryLimitLabel(acc) }} {{ isRemainingMode(acc.id) ? 'remaining' : 'limit' }}</span>
                       <span class="font-mono" :class="isRemainingMode(acc.id) ? 'text-blue-400' : 'text-gray-300'">
