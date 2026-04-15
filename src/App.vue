@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 
 const message = ref('Connecing to Rust...')
 type Account = {
@@ -18,11 +18,30 @@ type Account = {
   secondary_reset_at?: number | null
 }
 
+type CardWindow = {
+  key: 'primary' | 'secondary'
+  label: string
+  used: number
+  resetAt?: number | null
+}
+
+type DisplayCard = {
+  id: string
+  source: 'account' | 'aggregate'
+  name: string
+  status: string
+  usageLabel: string
+  memberCount: number
+  windows: CardWindow[]
+  account?: Account
+}
+
 const stats = ref<{ tasks: number, accounts: Account[] }>({ tasks: 0, accounts: [] })
 let statusInterval: number | null = null
 
 const showAddModal = ref(false)
 const showSettingsModal = ref(false)
+const dashboardMode = ref<'normal' | 'aggregate'>('normal')
 
 const isSyncing = ref(false)
 const editingId = ref<string | null>(null)
@@ -59,6 +78,142 @@ const primaryLimitLabel = (acc: Account) => formatWindowLabel(acc.primary_window
 const secondaryLimitLabel = (acc: Account) => formatWindowLabel(acc.secondary_window_minutes, 'Weekly')
 const hasPrimaryWindow = (acc: Account) => acc.primary_window_present ?? false
 const hasSecondaryWindow = (acc: Account) => acc.secondary_window_present ?? false
+const normalizePlanLabel = (acc: Account) => (acc.usage_str || 'UNKNOWN').trim().toUpperCase()
+const formatAccountCount = (count: number) => `${count} account${count === 1 ? '' : 's'}`
+
+const buildWindowsFromAccount = (acc: Account): CardWindow[] => {
+  const windows: CardWindow[] = []
+
+  if (hasPrimaryWindow(acc)) {
+    windows.push({
+      key: 'primary',
+      label: primaryLimitLabel(acc),
+      used: acc.primary_used,
+      resetAt: acc.primary_reset_at
+    })
+  }
+
+  if (hasSecondaryWindow(acc)) {
+    windows.push({
+      key: 'secondary',
+      label: secondaryLimitLabel(acc),
+      used: acc.secondary_used,
+      resetAt: acc.secondary_reset_at
+    })
+  }
+
+  return windows
+}
+
+const buildAccountCard = (acc: Account): DisplayCard => ({
+  id: acc.id,
+  source: 'account',
+  name: acc.name,
+  status: acc.status,
+  usageLabel: acc.usage_str || '$0.00',
+  memberCount: 1,
+  windows: buildWindowsFromAccount(acc),
+  account: acc
+})
+
+const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length
+
+const earliestReset = (values: Array<number | null | undefined>) => {
+  const valid = values.filter((value): value is number => typeof value === 'number' && value > 0)
+  if (valid.length === 0) return null
+  return Math.min(...valid)
+}
+
+const buildAggregateCard = (planLabel: string, accounts: Account[]): DisplayCard => {
+  const primaryAccounts = accounts.filter(hasPrimaryWindow)
+  const secondaryAccounts = accounts.filter(hasSecondaryWindow)
+  const windows: CardWindow[] = []
+
+  if (primaryAccounts.length > 0) {
+    windows.push({
+      key: 'primary',
+      label: primaryLimitLabel(primaryAccounts[0]),
+      used: average(primaryAccounts.map((acc) => acc.primary_used)),
+      resetAt: earliestReset(primaryAccounts.map((acc) => acc.primary_reset_at))
+    })
+  }
+
+  if (secondaryAccounts.length > 0) {
+    windows.push({
+      key: 'secondary',
+      label: secondaryLimitLabel(secondaryAccounts[0]),
+      used: average(secondaryAccounts.map((acc) => acc.secondary_used)),
+      resetAt: earliestReset(secondaryAccounts.map((acc) => acc.secondary_reset_at))
+    })
+  }
+
+  return {
+    id: `aggregate:${planLabel}`,
+    source: 'aggregate',
+    name: planLabel,
+    status: 'Active',
+    usageLabel: planLabel,
+    memberCount: accounts.length,
+    windows
+  }
+}
+
+const isAggregatableAccount = (acc: Account) => {
+  const usage = (acc.usage_str || '').trim()
+  return acc.status === 'Active' && usage.length > 0 && !usage.startsWith('$')
+}
+
+const normalCards = computed(() => stats.value.accounts.map(buildAccountCard))
+
+const aggregateCards = computed(() => {
+  const groupedAccounts = new Map<string, Account[]>()
+  const orderedEntries: Array<DisplayCard | { kind: 'group', groupKey: string }> = []
+
+  for (const acc of stats.value.accounts) {
+    if (!isAggregatableAccount(acc)) {
+      orderedEntries.push(buildAccountCard(acc))
+      continue
+    }
+
+    const groupKey = normalizePlanLabel(acc)
+    const group = groupedAccounts.get(groupKey)
+
+    if (group) {
+      group.push(acc)
+      continue
+    }
+
+    groupedAccounts.set(groupKey, [acc])
+    orderedEntries.push({ kind: 'group', groupKey })
+  }
+
+  return orderedEntries.map((entry) =>
+    'kind' in entry
+      ? buildAggregateCard(entry.groupKey, groupedAccounts.get(entry.groupKey) ?? [])
+      : entry
+  )
+})
+
+const displayedCards = computed(() => dashboardMode.value === 'aggregate' ? aggregateCards.value : normalCards.value)
+
+const totalLoggedInAccounts = computed(() => stats.value.tasks || stats.value.accounts.length)
+
+const windowValueClass = (window: CardWindow, remainingMode: boolean) => {
+  if (!remainingMode) return 'text-gray-300'
+  return window.key === 'primary' ? 'text-emerald-400' : 'text-blue-400'
+}
+
+const windowBarClass = (window: CardWindow, remainingMode: boolean) => {
+  if (window.key === 'primary') {
+    return remainingMode
+      ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]'
+      : 'bg-emerald-600 shadow-[0_0_8px_rgba(5,150,105,0.5)]'
+  }
+
+  return remainingMode
+    ? 'bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]'
+    : 'bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.5)]'
+}
 
 const formatResetTime = (unixTs: number | null | undefined): string => {
   if (!unixTs) return '—'
@@ -252,9 +407,35 @@ const openDataFolder = () => {
       <!-- 右侧内容 -->
       <div class="flex-1 p-8 overflow-y-auto bg-[#1c1c1c] relative relative">
         
-        <div class="flex justify-between items-end relative pb-2 border-b border-[#303030] mb-6">
-           <h2 class="text-2xl font-semibold text-white">API Quota Monitors</h2>
-           <button @click="showAddModal = true" class="text-sm bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded transition-colors shadow-md">+ Add API Session</button>
+        <div class="flex flex-wrap justify-between items-end gap-4 relative pb-2 border-b border-[#303030] mb-6">
+           <div>
+             <h2 class="text-2xl font-semibold text-white">API Quota Monitors</h2>
+             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+               <span class="px-2.5 py-1 rounded-md bg-[#252525] border border-[#353535]">
+                 Accounts:
+                 <span class="ml-1 font-semibold text-white">{{ totalLoggedInAccounts }}</span>
+               </span>
+             </div>
+           </div>
+           <div class="flex items-center gap-3">
+              <div class="flex items-center bg-[#252525] border border-[#3a3a3a] rounded-md p-1">
+                <button
+                  @click="dashboardMode = 'normal'"
+                 class="px-3 py-1 text-xs font-semibold rounded transition-colors"
+                 :class="dashboardMode === 'normal' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-white/5'"
+               >
+                 Normal
+               </button>
+               <button
+                 @click="dashboardMode = 'aggregate'"
+                 class="px-3 py-1 text-xs font-semibold rounded transition-colors"
+                 :class="dashboardMode === 'aggregate' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-white/5'"
+               >
+                 Aggregate
+               </button>
+              </div>
+              <button @click="showAddModal = true" class="text-sm bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded transition-colors shadow-md">+ Add API Session</button>
+           </div>
         </div>
 
         <template v-if="stats.accounts && stats.accounts.length === 0">
@@ -266,77 +447,64 @@ const openDataFolder = () => {
         
         <template v-else>
           <div class="grid xl:grid-cols-2 gap-6 items-start">
-            <div v-for="acc in stats.accounts" :key="acc.id" class="bg-[#2b2b2b] border border-[#3e3e3e] rounded-lg shadow-sm relative group flex flex-col overflow-hidden">
+            <div v-for="card in displayedCards" :key="card.id" class="bg-[#2b2b2b] border border-[#3e3e3e] rounded-lg shadow-sm relative group flex flex-col overflow-hidden">
               
               <div class="p-6 pb-5 relative">
-                <div class="absolute top-4 right-4 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                  <button v-if="acc.key.trim().startsWith('{')" @click="copyKey(acc.key)" class="text-green-400 bg-green-400/10 hover:bg-green-400/20 px-2 py-1 rounded text-xs border border-green-400/20 transition-colors" title="Copy FULL auth.json array">
+                <div v-if="card.source === 'account' && card.account" class="absolute top-4 right-4 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                  <button v-if="card.account.key.trim().startsWith('{')" @click="copyKey(card.account.key)" class="text-green-400 bg-green-400/10 hover:bg-green-400/20 px-2 py-1 rounded text-xs border border-green-400/20 transition-colors" title="Copy FULL auth.json array">
                     COPY JSON
                   </button>
-                  <button @click="toggleMode(acc.id)" class="text-blue-400 bg-blue-400/10 hover:bg-blue-400/20 px-2 py-1 rounded text-xs border border-blue-400/20 transition-colors" title="Toggle Used / Remaining Quota">
+                  <button @click="toggleMode(card.id)" class="text-blue-400 bg-blue-400/10 hover:bg-blue-400/20 px-2 py-1 rounded text-xs border border-blue-400/20 transition-colors" title="Toggle Used / Remaining Quota">
                     SWITCH
                   </button>
-                  <button @click="deleteAccount(acc.id)" class="text-red-500 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded text-xs border border-red-500/20 transition-colors">
+                  <button @click="deleteAccount(card.account.id)" class="text-red-500 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded text-xs border border-red-500/20 transition-colors">
                     DELETE
                   </button>
                 </div>
-                
                 <div class="flex items-center space-x-3 mb-4 pr-16 border-l-2 border-transparent hover:border-blue-500 pl-1 transition-all">
                   <div class="w-10 h-10 rounded-full bg-blue-500/10 text-blue-500 flex flex-shrink-0 items-center justify-center text-xl shadow-inner">&#128100;</div>
                   <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2" v-if="editingId === acc.id">
-                        <input type="text" v-model="editName" @blur="finishEdit(acc.id)" @keyup.enter="finishEdit(acc.id)" class="w-full text-white font-medium text-lg bg-[#303030] outline-none border border-blue-500 rounded px-1.5 py-0.5" autofocus />
+                      <div class="flex items-center gap-2" v-if="card.source === 'account' && card.account && editingId === card.account.id">
+                        <input type="text" v-model="editName" @blur="finishEdit(card.account.id)" @keyup.enter="finishEdit(card.account.id)" class="w-full text-white font-medium text-lg bg-[#303030] outline-none border border-blue-500 rounded px-1.5 py-0.5" autofocus />
                       </div>
                       <h3 v-else class="text-white font-medium text-lg leading-tight flex items-center gap-2 truncate group/name">
-                        <span class="truncate">{{ acc.name }}</span>
-                        <button @click="startEdit(acc)" class="opacity-0 group-hover/name:opacity-100 text-gray-400 hover:text-white transition-opacity shrink-0">
+                        <span class="truncate">{{ card.name }}</span>
+                        <button v-if="card.source === 'account' && card.account" @click="startEdit(card.account)" class="opacity-0 group-hover/name:opacity-100 text-gray-400 hover:text-white transition-opacity shrink-0">
                           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                         </button>
-                        <span class="flex-shrink-0 px-1.5 py-0.5 rounded-full bg-[#303030] text-[10px] text-gray-400 font-mono tracking-wider ml-auto">{{ acc.id.slice(-4) }}</span>
+                        <span v-if="card.source === 'account' && card.account" class="flex-shrink-0 px-1.5 py-0.5 rounded-full bg-[#303030] text-[10px] text-gray-400 font-mono tracking-wider ml-auto">{{ card.account.id.slice(-4) }}</span>
+                        <span v-else class="flex-shrink-0 px-1.5 py-0.5 rounded-full bg-[#303030] text-[10px] text-gray-400 font-mono tracking-wider ml-auto">{{ formatAccountCount(card.memberCount) }}</span>
                       </h3>
-                      <p class="text-xs text-gray-500 mt-1 font-mono bg-black/20 inline-block px-1.5 py-0.5 rounded truncate max-w-full" :title="acc.key">{{ displayKey(acc.key) }}</p>
+                      <p v-if="card.source === 'account' && card.account" class="text-xs text-gray-500 mt-1 font-mono bg-black/20 inline-block px-1.5 py-0.5 rounded truncate max-w-full" :title="card.account.key">{{ displayKey(card.account.key) }}</p>
+                      <p v-else class="text-xs text-gray-500 mt-1 font-mono bg-black/20 inline-block px-1.5 py-0.5 rounded truncate max-w-full">Weighted aggregate</p>
                   </div>
                 </div>
                 
                 <div class="flex justify-between items-end mt-4 bg-[#202020] p-4 rounded-md border border-[#303030]">
                   <div>
                       <span class="text-xs text-gray-500 block mb-1">State</span>
-                      <span :class="acc.status === 'Active' ? 'text-green-400' : (acc.status.includes('Error') || acc.status.includes('Invalid') ? 'text-red-500' : 'text-yellow-500')" class="text-xs font-semibold uppercase tracking-wider">{{ acc.status }}</span>
+                      <span :class="card.status === 'Active' ? 'text-green-400' : (card.status.includes('Error') || card.status.includes('Invalid') ? 'text-red-500' : 'text-yellow-500')" class="text-xs font-semibold uppercase tracking-wider">{{ card.status }}</span>
                   </div>
                   <div class="text-right">
-                      <span class="text-xs text-gray-500 block mb-0.5">Used Quota</span>
-                      <span class="text-2xl font-semibold tracking-tight text-white">{{ acc.usage_str || '$0.00' }}</span>
+                      <span class="text-xs text-gray-500 block mb-0.5">{{ card.source === 'aggregate' ? 'Plan' : 'Used Quota' }}</span>
+                      <span class="text-2xl font-semibold tracking-tight text-white">{{ card.usageLabel || '$0.00' }}</span>
                   </div>
                 </div>
 
-                <div class="mt-4 space-y-3 pt-2" v-if="acc.status === 'Active'">
-                  <div v-if="hasPrimaryWindow(acc)">
+                <div class="mt-4 space-y-3 pt-2" v-if="card.status === 'Active'">
+                  <div v-for="(window, index) in card.windows" :key="`${card.id}-${window.key}`" :class="index > 0 ? 'pt-1' : ''">
                     <div class="flex justify-between items-center text-[11px] mb-1.5">
-                      <span class="text-gray-400 tracking-wide">{{ primaryLimitLabel(acc) }} {{ isRemainingMode(acc.id) ? 'remaining' : 'limit' }}</span>
-                      <span class="font-mono" :class="isRemainingMode(acc.id) ? 'text-emerald-400' : 'text-gray-300'">
-                        {{ isRemainingMode(acc.id) ? (100 - acc.primary_used).toFixed(1) : acc.primary_used.toFixed(1) }}%
+                      <span class="text-gray-400 tracking-wide">{{ window.label }} {{ isRemainingMode(card.id) ? 'remaining' : 'limit' }}</span>
+                      <span class="font-mono" :class="windowValueClass(window, isRemainingMode(card.id))">
+                        {{ isRemainingMode(card.id) ? (100 - window.used).toFixed(1) : window.used.toFixed(1) }}%
                       </span>
                     </div>
                     <div class="w-full h-1.5 bg-[#303030] rounded-full overflow-hidden">
                       <div class="h-full rounded-full transition-all duration-500" 
-                          :class="isRemainingMode(acc.id) ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-emerald-600 shadow-[0_0_8px_rgba(5,150,105,0.5)]'"
-                          :style="{ width: Math.min(100, Math.max(0, isRemainingMode(acc.id) ? 100 - acc.primary_used : acc.primary_used)) + '%' }"></div>
+                          :class="windowBarClass(window, isRemainingMode(card.id))"
+                          :style="{ width: Math.min(100, Math.max(0, isRemainingMode(card.id) ? 100 - window.used : window.used)) + '%' }"></div>
                     </div>
-                    <div class="text-[10px] text-gray-500 mt-1 text-right font-mono">{{ formatResetTime(acc.primary_reset_at) }}</div>
-                  </div>
-                  <div v-if="hasSecondaryWindow(acc)" class="pt-1">
-                    <div class="flex justify-between items-center text-[11px] mb-1.5">
-                      <span class="text-gray-400 tracking-wide">{{ secondaryLimitLabel(acc) }} {{ isRemainingMode(acc.id) ? 'remaining' : 'limit' }}</span>
-                      <span class="font-mono" :class="isRemainingMode(acc.id) ? 'text-blue-400' : 'text-gray-300'">
-                        {{ isRemainingMode(acc.id) ? (100 - acc.secondary_used).toFixed(1) : acc.secondary_used.toFixed(1) }}%
-                      </span>
-                    </div>
-                    <div class="w-full h-1.5 bg-[#303030] rounded-full overflow-hidden">
-                      <div class="h-full rounded-full transition-all duration-500"
-                          :class="isRemainingMode(acc.id) ? 'bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]' : 'bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.5)]'"
-                          :style="{ width: Math.min(100, Math.max(0, isRemainingMode(acc.id) ? 100 - acc.secondary_used : acc.secondary_used)) + '%' }"></div>
-                    </div>
-                    <div class="text-[10px] text-gray-500 mt-1 text-right font-mono">{{ formatResetTime(acc.secondary_reset_at) }}</div>
+                    <div class="text-[10px] text-gray-500 mt-1 text-right font-mono">{{ formatResetTime(window.resetAt) }}</div>
                   </div>
                 </div>
               </div>
