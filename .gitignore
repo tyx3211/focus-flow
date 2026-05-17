@@ -22,6 +22,7 @@ settings.json
 # Local tools, installers, and accidentally copied repositories
 rustup-init.exe
 codex-src/
+zed-tunnel-panel/
 
 # Logs and diagnostics
 *.log
